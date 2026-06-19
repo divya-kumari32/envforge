@@ -3,7 +3,7 @@ from __future__ import annotations
 
 class BudgetExceeded(Exception):
     def __init__(self, role: str, spent: float, cap: float):
-        super().__init__(f"budget for role '{role}' exceeded: {spent} > {cap}")
+        super().__init__(f"budget for role '{role}' exceeded: {spent} >= {cap}")
         self.role = role
         self.spent = spent
         self.cap = cap
