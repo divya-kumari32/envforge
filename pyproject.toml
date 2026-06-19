@@ -1,0 +1,22 @@
+[project]
+name = "envforge"
+version = "0.1.0"
+description = "Multi-model pipeline for generating and evaluating webarena-style environments"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+envforge = "envforge.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["envforge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
