@@ -1179,8 +1179,13 @@ class BudgetLedger:
         self._spent: dict[str, float] = {}
 
     def record(self, role: str, cost: float) -> None:
+        # Record first, then raise only when strictly OVER the cap (`>`, not
+        # `>=`): landing exactly on the cap is allowed by record(), whereas
+        # check() (>=) treats at-cap as already exhausted.
         self._spent[role] = self._spent.get(role, 0.0) + cost
-        self.check(role)
+        cap = self._caps.get(role)
+        if cap is not None and self._spent[role] > cap:
+            raise BudgetExceeded(role, self._spent[role], cap)
 
     def spent(self, role: str | None = None) -> float:
         if role is None:
