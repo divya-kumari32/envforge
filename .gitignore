@@ -5,3 +5,8 @@ __pycache__/
 runs/
 *.egg-info/
 .pytest_cache/
+
+# BlueVela submission scripts are NEVER committed (any branch).
+# Written locally, scp'd to BV. See spec §16.
+*.bsub
+infra/bluevela/

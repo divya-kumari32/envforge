@@ -18,6 +18,11 @@
 - Timestamps are ISO-8601 UTC strings; functions that stamp time accept an injectable `now` parameter for deterministic tests.
 - Commit messages: imperative mood, no `Co-Authored-By` line.
 - Package import root is `envforge`; tests live under `tests/` and import from `envforge`.
+- **Branch:** all of Plan 1 lands on `main` — it is portable and contains no
+  cluster-specific code. BlueVela/enroot specifics are reserved for the `bluevela` branch
+  (Plan 4). `main` must never import anything BlueVela-specific.
+- **bsubs are never committed.** `*.bsub` is gitignored on every branch; submission scripts
+  are written locally and `scp`'d to BlueVela, never stored in the repo.
 
 ---
 
@@ -2284,6 +2289,6 @@ git commit -m "Add README; robustness core complete and green"
 
 ## Out of scope (later plans)
 
-- **Plan 2:** `agents/` (opencode `CodingAgent`, browser_use `EvalAgent`), `kinds/browser_webapp/` (`/api/state` protocol, 3 health gates), real `OpenAITransport`, the generate→eval vertical slice.
-- **Plan 3:** function-task / audit / real-task / hardening / regression phases.
-- **Plan 4:** `runtimes/bluevela.py` (LSF/enroot single-process setup), external status watcher.
+- **Plan 2 (→ `main`):** `agents/` (opencode `CodingAgent`, browser_use `EvalAgent`), `kinds/browser_webapp/` (`/api/state` protocol, 3 health gates), real `OpenAITransport`, the generate→eval vertical slice.
+- **Plan 3 (→ `main`):** function-task / audit / real-task / hardening / regression phases.
+- **Plan 4 (→ `bluevela` branch):** `runtimes/bluevela.py` (LSF/enroot single-process setup), container/`uv.lock` setup fixes, enroot-specific exit codes, external status watcher. Branched off `main`; merges `main` forward. No bsubs committed.
