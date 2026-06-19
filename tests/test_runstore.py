@@ -56,3 +56,12 @@ def test_record_port(tmp_path: Path):
     rs = RunStore.create(tmp_path, "r", "demo", now=NOW)
     rs.record_port("app", 8200)
     assert RunStore.load(tmp_path, "r").ports == {"app": 8200}
+
+
+def test_state_is_deep_copy(tmp_path: Path):
+    rs = RunStore.create(tmp_path, "r", "demo", now=NOW)
+    snapshot = rs.state
+    snapshot["kind"] = "corrupted"
+    snapshot["steps"]["generate"] = {"status": "done"}
+    assert rs.kind == "demo"
+    assert rs.step_status("generate") is StepStatus.PENDING
