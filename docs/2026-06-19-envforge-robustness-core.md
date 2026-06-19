@@ -2259,8 +2259,7 @@ uv run envforge run --kind demo --runs-root /tmp/ef-runs
 - **Port broker** — atomic port leases (no collisions).
 - **Classified exits** — every termination carries an `ExitCode`.
 
-See `docs/superpowers/specs/` for the design and `docs/superpowers/plans/` for
-the implementation plans.
+See `docs/` for the design spec and the implementation plans.
 ```
 
 - [ ] **Step 3: Commit**
