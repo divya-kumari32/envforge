@@ -17,8 +17,10 @@ def atomic_write_json(path: Path, data: object) -> None:
             os.fsync(f.fileno())
         os.replace(tmp, path)
     except BaseException:
-        if os.path.exists(tmp):
+        try:
             os.unlink(tmp)
+        except FileNotFoundError:
+            pass
         raise
 
 
