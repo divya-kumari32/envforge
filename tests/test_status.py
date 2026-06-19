@@ -32,3 +32,14 @@ def test_activity_appends_json_lines(tmp_path: Path):
     first = json.loads(lines[0])
     assert first == {"ts": NOW, "event": "phase_start", "phase": "generate"}
     assert json.loads(lines[1])["files"] == 3
+
+
+def test_new_instance_seeds_from_existing_status(tmp_path: Path):
+    # First instance writes some state.
+    StatusWriter(tmp_path).write_status({"run_id": "r", "phase": "generate"}, now=NOW)
+    # Resume: a brand-new instance on the SAME dir must preserve prior keys.
+    StatusWriter(tmp_path).write_status({"phase": "eval"}, now="2026-06-19T00:05:00Z")
+    data = json.loads((tmp_path / "STATUS.json").read_text())
+    assert data["run_id"] == "r"      # preserved across instances (resume)
+    assert data["phase"] == "eval"    # updated
+    assert data["updated_at"] == "2026-06-19T00:05:00Z"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .jsonio import atomic_write_json
+from .jsonio import atomic_write_json, read_json
 
 
 class StatusWriter:
@@ -13,6 +13,13 @@ class StatusWriter:
         self._status_path = self._dir / "STATUS.json"
         self._activity_path = self._dir / "activity.jsonl"
         self._status: dict = {}
+        if self._status_path.exists():
+            try:
+                loaded = read_json(self._status_path)
+                if isinstance(loaded, dict):
+                    self._status = loaded
+            except (ValueError, OSError):
+                self._status = {}
 
     def write_status(self, fields: dict, *, now: str) -> None:
         self._status.update(fields)
