@@ -7,6 +7,7 @@ import os
 import socket
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 from .core.exits import EnvforgeExit, ExitCode
@@ -78,7 +79,7 @@ def cmd_run(args, *, now: str | None = None, host: str | None = None, pid: int |
     return _drive(
         Path(args.runs_root), run_id, args.kind, Path(args.ports_dir),
         now=now, host=host or socket.gethostname(), pid=pid or os.getpid(),
-        lock_now=lock_now if lock_now is not None else 0.0, alive=alive,
+        lock_now=lock_now if lock_now is not None else time.time(), alive=alive,
     )
 
 
@@ -91,7 +92,7 @@ def cmd_resume(args, *, now: str | None = None, host: str | None = None, pid: in
     return _drive(
         Path(args.runs_root), args.run, kind, Path(args.ports_dir),
         now=now, host=host or socket.gethostname(), pid=pid or os.getpid(),
-        lock_now=lock_now if lock_now is not None else 0.0, alive=alive,
+        lock_now=lock_now if lock_now is not None else time.time(), alive=alive,
     )
 
 
@@ -110,9 +111,14 @@ def cmd_clean(args, **_kw) -> int:
         print(f"no such run: {args.run}", file=sys.stderr)
         return int(ExitCode.FATAL)
     if args.dry_run:
-        print(f"[dry-run] would tar-then-remove {run_dir}")
+        print(f"[dry-run] would tar-back-up {run_dir} (leaving it in place)")
         return int(ExitCode.OK)
+    # Never overwrite an existing backup (cleanup-trap guard): pick a free name.
     backup = run_dir.with_suffix(".tar.gz")
+    i = 1
+    while backup.exists():
+        backup = run_dir.parent / f"{run_dir.name}.tar.gz.{i}"
+        i += 1
     with tarfile.open(backup, "w:gz") as tar:  # tar-first, never blind-delete
         tar.add(run_dir, arcname=run_dir.name)
     print(f"backed up to {backup} (left {run_dir} in place; remove manually)")
@@ -152,7 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if getattr(args, "ports_dir", None) is None and hasattr(args, "ports_dir"):
+    if getattr(args, "ports_dir", None) is None:
         args.ports_dir = str(Path(args.runs_root) / "_ports")
     return args.func(args)
 

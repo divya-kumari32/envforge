@@ -58,3 +58,39 @@ def test_duplicate_run_id_blocked_by_live_lock(tmp_path: Path):
 def test_main_dispatch_returns_int(tmp_path: Path):
     code = cli.main(["status", "--run", "missing", "--runs-root", str(tmp_path)])
     assert isinstance(code, int)
+
+
+def test_clean_is_tar_first_and_leaves_dir(tmp_path: Path):
+    ns = _args_run(tmp_path)
+    cli.cmd_run(ns, now=NOW, host="hostA", pid=123)
+    run_id = cli.build_run_id("demo", NOW)
+    cl = cli.build_parser().parse_args(["clean", "--run", run_id, "--runs-root", str(tmp_path)])
+    code = cli.cmd_clean(cl)
+    assert code == int(ExitCode.OK)
+    assert (tmp_path / run_id).exists()  # dir left in place
+    assert (tmp_path / f"{run_id}.tar.gz").exists()  # backup made
+
+
+def test_clean_never_overwrites_existing_backup(tmp_path: Path):
+    ns = _args_run(tmp_path)
+    cli.cmd_run(ns, now=NOW, host="hostA", pid=123)
+    run_id = cli.build_run_id("demo", NOW)
+    cl = cli.build_parser().parse_args(["clean", "--run", run_id, "--runs-root", str(tmp_path)])
+    cli.cmd_clean(cl)
+    cli.cmd_clean(cl)  # second clean must not clobber the first archive
+    assert (tmp_path / f"{run_id}.tar.gz").exists()
+    assert (tmp_path / f"{run_id}.tar.gz.1").exists()
+
+
+def test_clean_dry_run_makes_no_backup(tmp_path: Path):
+    ns = _args_run(tmp_path)
+    cli.cmd_run(ns, now=NOW, host="hostA", pid=123)
+    run_id = cli.build_run_id("demo", NOW)
+    cl = cli.build_parser().parse_args(["clean", "--run", run_id, "--runs-root", str(tmp_path), "--dry-run"])
+    assert cli.cmd_clean(cl) == int(ExitCode.OK)
+    assert not (tmp_path / f"{run_id}.tar.gz").exists()
+
+
+def test_clean_missing_run_is_fatal(tmp_path: Path):
+    cl = cli.build_parser().parse_args(["clean", "--run", "nope", "--runs-root", str(tmp_path)])
+    assert cli.cmd_clean(cl) == int(ExitCode.FATAL)
