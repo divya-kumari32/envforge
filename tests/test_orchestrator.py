@@ -90,3 +90,14 @@ def test_unexpected_exception_becomes_fatal(tmp_path: Path):
     orch = Orchestrator(rs, phases, DEMO_ORDER, _ctx(tmp_path, rs, {}))
     assert orch.run() is ExitCode.FATAL
     assert rs.exit_code is ExitCode.FATAL
+
+
+def test_final_status_has_no_stale_running(tmp_path: Path):
+    import json
+    rs = RunStore.create(tmp_path / "runs", "r", "demo", now=NOW)
+    orch = Orchestrator(rs, DEMO_PHASES, DEMO_ORDER, _ctx(tmp_path, rs, {}))
+    assert orch.run() is ExitCode.OK
+    status = json.loads((tmp_path / "status" / "STATUS.json").read_text())
+    assert status["phase"] == "done"
+    assert status["exit"] == "OK"
+    assert status["step_status"] == "done"  # not a stale "running"

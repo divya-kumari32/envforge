@@ -52,3 +52,32 @@ def test_release_then_acquire(tmp_path: Path):
     lk.release()
     assert not p.exists()
     _lock(p, pid=222).acquire(now=1001.0)  # free now
+
+
+def test_cross_host_fresh_heartbeat_blocks(tmp_path: Path):
+    # Lock held by a live job on hostA; hostB cannot probe hostA's pid, so a
+    # FRESH heartbeat must be treated as live → duplicate blocked.
+    p = tmp_path / "run.lock"
+    _lock(p, pid=111, host="hostA").acquire(now=1000.0)
+    other = _lock(p, pid=222, host="hostB", alive=lambda pid: True)
+    with pytest.raises(DuplicateJobError):
+        other.acquire(now=1005.0)
+
+
+def test_cross_host_stale_heartbeat_is_reclaimed(tmp_path: Path):
+    # Stale heartbeat from another host → reclaimable.
+    p = tmp_path / "run.lock"
+    _lock(p, pid=111, host="hostA", ttl=30.0).acquire(now=1000.0)
+    other = _lock(p, pid=222, host="hostB", ttl=30.0, alive=lambda pid: True)
+    other.acquire(now=1100.0)  # 100s > 30s ttl → stale → no raise
+    assert p.exists()
+
+
+def test_invalid_pid_record_not_live(tmp_path: Path):
+    # A malformed same-host record with no pid (-1) must not be treated as live.
+    from envforge.core.jsonio import atomic_write_json
+    p = tmp_path / "run.lock"
+    atomic_write_json(p, {"host": "hostA", "heartbeat": 1000.0})  # no pid
+    other = _lock(p, pid=222, host="hostA", alive=lambda pid: True)
+    other.acquire(now=1005.0)  # invalid pid → not live → reclaim, no raise
+    assert p.exists()

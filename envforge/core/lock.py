@@ -38,11 +38,18 @@ class RunLock:
         self._alive = alive
 
     def _is_live(self, record: dict, now: float) -> bool:
-        if record.get("host") != self._host:
+        pid = int(record.get("pid", -1))
+        fresh = (now - float(record.get("heartbeat", 0))) <= self._ttl
+        if not fresh:
             return False
-        if not self._alive(int(record.get("pid", -1))):
-            return False
-        return (now - float(record.get("heartbeat", 0))) <= self._ttl
+        if record.get("host") == self._host:
+            # Same host: we can directly probe the PID. A missing/invalid pid
+            # (< 0) is never live — avoids os.kill(-1, ...) signalling everything.
+            return pid >= 0 and self._alive(pid)
+        # Different host (e.g. a shared filesystem across nodes): we cannot
+        # probe the remote PID, so trust the heartbeat TTL alone. A fresh
+        # heartbeat from another host means a live job → block as a duplicate.
+        return True
 
     def acquire(self, now: float) -> None:
         if self._path.exists():

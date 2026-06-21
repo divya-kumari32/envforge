@@ -24,7 +24,9 @@ class Orchestrator:
                 return code
         now = self._ctx.now()
         self._rs.set_exit(ExitCode.OK, "all phases complete", now=now)
-        self._status.write_status({"phase": "done", "exit": "OK"}, now=now)
+        # step_status is explicitly cleared to "done" so the terminal snapshot
+        # never reads exit=OK alongside a stale step_status=running.
+        self._status.write_status({"phase": "done", "step_status": "done", "exit": "OK"}, now=now)
         return ExitCode.OK
 
     def _run_one(self, name: str) -> ExitCode | None:
