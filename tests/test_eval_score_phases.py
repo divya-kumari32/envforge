@@ -56,3 +56,12 @@ def test_score_aggregates(tmp_path):
     assert res.ok and res.result["passed"] == 2 and res.result["failed"] == 1
     status = json.loads((rs.run_dir / "_status" / "STATUS.json").read_text())
     assert status["passed"] == 2
+
+
+def test_evaluate_zero_results_is_eval_harness_failure(tmp_path):
+    from envforge.core.exits import ExitCode
+    rs = RunStore.create(tmp_path / "runs", "r", "browser_webapp", now=NOW)
+    _seed_app_with_tasks(rs, 0)  # empty task suite → eval produces zero results
+    fake = FakeEvalAgent({})
+    res = EvaluatePhase(fake).run(_ctx(tmp_path, rs))
+    assert not res.ok and res.exit_code is ExitCode.EVAL_HARNESS_FAILURE
