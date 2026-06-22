@@ -51,3 +51,17 @@ def test_eval_liveness_fail_when_setup_raises(tmp_path: Path):
             raise RuntimeError("cannot observe")
     rep = asyncio.run(eval_liveness_gate(BoomAgent({}), "http://x"))
     assert not rep.ok and "cannot observe" in rep.detail
+
+
+def test_boot_serve_gate_is_failsafe_on_transport_error(tmp_path, monkeypatch):
+    # If talking to the app server raises (broken/slow server), the gate must
+    # return a classified not-ok HealthReport, never propagate an exception.
+    import envforge.kinds.browser_webapp.health as health_mod
+    (tmp_path / "index.html").write_text("<h1>a</h1>")
+
+    def boom(url, data):
+        raise ConnectionError("server died")
+    monkeypatch.setattr(health_mod, "_put_state", boom)
+
+    rep = asyncio.run(health_mod.boot_serve_gate(tmp_path, port=0))
+    assert not rep.ok and rep.gate == "boot_serve" and "server died" in rep.detail

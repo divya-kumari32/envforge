@@ -46,23 +46,29 @@ def _put_state(url: str, data: object) -> None:
 
 
 async def boot_serve_gate(app_dir: Path, port: int) -> HealthReport:
-    server = StateServer(Path(app_dir), port=port)
-    server.start()
+    # Fail-safe: any transport/HTTP error talking to the app server is an
+    # UNHEALTHY app, not a pipeline crash. Catch everything and return a
+    # classified HealthReport so the orchestrator reports APP_UNHEALTHY, never FATAL.
     try:
-        _put_state(server.url, {"probe": 1})
-        if _get_state_status(server.url) != 200:
-            return HealthReport(False, "boot_serve", "GET /api/state did not return 200 after PUT")
-    finally:
-        server.stop()
-    # Restart on a fresh server: state must NOT survive a restart (the app drives it,
-    # so a stale on-disk seed cannot mask a broken-JS app).
-    server2 = StateServer(Path(app_dir), port=port)
-    server2.start()
-    try:
-        if _get_state_status(server2.url) != 404:
-            return HealthReport(False, "boot_serve", "state unexpectedly persisted across restart")
-    finally:
-        server2.stop()
+        server = StateServer(Path(app_dir), port=port)
+        server.start()
+        try:
+            _put_state(server.url, {"probe": 1})
+            if _get_state_status(server.url) != 200:
+                return HealthReport(False, "boot_serve", "GET /api/state did not return 200 after PUT")
+        finally:
+            server.stop()
+        # Restart on a fresh server: state must NOT survive a restart (the app drives it,
+        # so a stale on-disk seed cannot mask a broken-JS app).
+        server2 = StateServer(Path(app_dir), port=port)
+        server2.start()
+        try:
+            if _get_state_status(server2.url) != 404:
+                return HealthReport(False, "boot_serve", "state unexpectedly persisted across restart")
+        finally:
+            server2.stop()
+    except Exception as exc:  # noqa: BLE001 — a broken app server is unhealthy, not fatal
+        return HealthReport(False, "boot_serve", f"{type(exc).__name__}: {exc}")
     return HealthReport(True, "boot_serve", "")
 
 
