@@ -92,3 +92,18 @@ def test_run_restarts_session_on_retryable_error(tmp_path: Path):
     res = asyncio.run(agent.run("task_e4", "do x", "http://x", tmp_path / "t4"))
     assert res.passed
     assert len(sessions) >= 2  # restarted at least once
+
+
+def test_setup_tears_down_session_when_seed_never_ready(tmp_path: Path):
+    # setup() must not leak a browser session if /api/state never returns 200.
+    sess = FakeSession()
+    agent = BrowserUseEvalAgent(
+        llm=object(), verifier_dir=tmp_path,
+        session_factory=lambda: sess,
+        agent_factory=lambda **kw: FakeAgent(),
+        sleep=lambda s: asyncio.sleep(0),
+    )
+    # No server running at this URL → GET /api/state always fails → EvalHarnessError.
+    with pytest.raises(EvalHarnessError):
+        asyncio.run(agent.setup("http://127.0.0.1:1"))
+    assert sess.killed and agent._session is None  # torn down, not leaked

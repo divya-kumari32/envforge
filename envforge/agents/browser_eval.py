@@ -69,6 +69,9 @@ class BrowserUseEvalAgent:
                 continue
             except Exception:
                 continue
+        # Seed never captured: tear down the session we started so a failed
+        # setup never leaks a browser process, then signal the harness failure.
+        await self.teardown()
         raise EvalHarnessError("seed state not captured: GET /api/state never returned 200")
 
     async def teardown(self) -> None:
