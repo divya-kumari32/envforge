@@ -19,6 +19,8 @@ class EvaluatePhase:
 
     def run(self, ctx: PhaseContext) -> PhaseResult:
         app_dir = Path(ctx.runstore.state["steps"]["generate_app"]["result"]["app_dir"])
+        if hasattr(self._eval_agent, "set_verifier_dir"):
+            self._eval_agent.set_verifier_dir(app_dir / "verifiers")
         tasks = json.loads((app_dir / "function-tasks.json").read_text())
         owner = f"{ctx.runstore.run_id}:app"
         port = ctx.ports.lease(owner)

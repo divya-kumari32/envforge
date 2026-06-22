@@ -40,6 +40,9 @@ class BrowserUseEvalAgent:
         self._session = None
         self._server_url: str | None = None
 
+    def set_verifier_dir(self, path: Path) -> None:
+        self._verifier_dir = Path(path)
+
     @staticmethod
     def _default_session_factory():
         from browser_use import BrowserSession  # lazy import

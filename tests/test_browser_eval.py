@@ -107,3 +107,10 @@ def test_setup_tears_down_session_when_seed_never_ready(tmp_path: Path):
     with pytest.raises(EvalHarnessError):
         asyncio.run(agent.setup("http://127.0.0.1:1"))
     assert sess.killed and agent._session is None  # torn down, not leaked
+
+
+def test_set_verifier_dir(tmp_path):
+    from envforge.agents.browser_eval import BrowserUseEvalAgent
+    a = BrowserUseEvalAgent(llm=object(), verifier_dir=tmp_path)
+    a.set_verifier_dir(tmp_path / "v")
+    assert a._verifier_dir == tmp_path / "v"

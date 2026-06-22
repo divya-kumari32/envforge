@@ -21,6 +21,7 @@ from .models.gateway import FakeTransport, ModelGateway
 from .phases.base import PhaseContext
 from .phases.demo import DEMO_ORDER, DEMO_PHASES
 from .runtimes.local import LocalRuntime
+from .kinds.browser_webapp.kind import BrowserWebAppKind
 
 
 def _utcnow() -> str:
@@ -32,16 +33,44 @@ def build_run_id(kind: str, now: str) -> str:
     return f"{kind}-{compact}"
 
 
-# Registry maps a kind name to (phases, order). Only "demo" exists in Plan 1.
+# Registry maps a kind name to (phases, order). "demo" is the Plan-1 fake kind.
 KINDS = {"demo": (DEMO_PHASES, DEMO_ORDER)}
 
+# Kinds that build their phases dynamically from run args (real agents).
+DYNAMIC_KINDS = ("browser_webapp",)
 
-def _build_orchestrator(runs_root: Path, run_id: str, kind: str, ports_dir: Path, now: str) -> tuple[Orchestrator, RunStore]:
+
+def _build_browser_webapp_kind(args) -> BrowserWebAppKind:
+    import os
+
+    from .agents.browser_eval import BrowserUseEvalAgent
+    from .agents.opencode_agent import OpencodeAgent
+    from browser_use.llm.openai.chat import ChatOpenAI  # lazy; only when actually running
+
+    llm = ChatOpenAI(model=args.eval_model,
+                     base_url=os.environ["OPENAI_BASE_URL"],
+                     api_key=os.environ["OPENAI_API_KEY"])
+    coding = OpencodeAgent()
+    # verifier_dir is rebound per-run inside EvaluatePhase via set_verifier_dir().
+    eval_agent = BrowserUseEvalAgent(llm, verifier_dir=Path(args.runs_root))
+    return BrowserWebAppKind(coding, eval_agent, gen_model=args.gen_model,
+                             eval_model=args.eval_model, docs_path=Path(args.docs),
+                             task_count=args.task_count)
+
+
+def _build_orchestrator(runs_root: Path, run_id: str, kind: str, ports_dir: Path, now: str, args=None) -> tuple[Orchestrator, RunStore]:
     if RunStore.exists(runs_root, run_id):
         rs = RunStore.load(runs_root, run_id)
     else:
         rs = RunStore.create(runs_root, run_id, kind, now=now)
-    phases, order = KINDS[rs.kind]
+    if rs.kind in DYNAMIC_KINDS:
+        if rs.kind == "browser_webapp":
+            built = _build_browser_webapp_kind(args)
+            phases, order = built.phases(), built.order()
+        else:  # pragma: no cover - defensive
+            raise EnvforgeExit(ExitCode.FATAL, f"unbuildable dynamic kind: {rs.kind}")
+    else:
+        phases, order = KINDS[rs.kind]
     status = StatusWriter(rs.run_dir / "_status")
     gateway = ModelGateway({}, BudgetLedger({}), FakeTransport([]), sleep=lambda s: None)
     ctx = PhaseContext(
@@ -56,7 +85,7 @@ def _build_orchestrator(runs_root: Path, run_id: str, kind: str, ports_dir: Path
     return Orchestrator(rs, phases, order, ctx), rs
 
 
-def _drive(runs_root: Path, run_id: str, kind: str, ports_dir: Path, *, now: str, host: str, pid: int, lock_now: float, alive) -> int:
+def _drive(runs_root: Path, run_id: str, kind: str, ports_dir: Path, *, now: str, host: str, pid: int, lock_now: float, alive, args=None) -> int:
     run_dir = Path(runs_root) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     lock = RunLock(run_dir / "run.lock", pid=pid, host=host, alive=alive)
@@ -65,7 +94,7 @@ def _drive(runs_root: Path, run_id: str, kind: str, ports_dir: Path, *, now: str
     except DuplicateJobError:
         return int(ExitCode.DUPLICATE_JOB)
     try:
-        orch, _rs = _build_orchestrator(runs_root, run_id, kind, ports_dir, now)
+        orch, _rs = _build_orchestrator(runs_root, run_id, kind, ports_dir, now, args=args)
         return int(orch.run())
     except EnvforgeExit as exc:
         return int(exc.code)
@@ -79,7 +108,7 @@ def cmd_run(args, *, now: str | None = None, host: str | None = None, pid: int |
     return _drive(
         Path(args.runs_root), run_id, args.kind, Path(args.ports_dir),
         now=now, host=host or socket.gethostname(), pid=pid or os.getpid(),
-        lock_now=lock_now if lock_now is not None else time.time(), alive=alive,
+        lock_now=lock_now if lock_now is not None else time.time(), alive=alive, args=args,
     )
 
 
@@ -92,7 +121,7 @@ def cmd_resume(args, *, now: str | None = None, host: str | None = None, pid: in
     return _drive(
         Path(args.runs_root), args.run, kind, Path(args.ports_dir),
         now=now, host=host or socket.gethostname(), pid=pid or os.getpid(),
-        lock_now=lock_now if lock_now is not None else time.time(), alive=alive,
+        lock_now=lock_now if lock_now is not None else time.time(), alive=alive, args=args,
     )
 
 
@@ -134,7 +163,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--ports-dir", default=None)
 
     r = sub.add_parser("run")
-    r.add_argument("--kind", default="demo", choices=list(KINDS))
+    r.add_argument("--kind", default="demo", choices=list(KINDS) + list(DYNAMIC_KINDS))
+    r.add_argument("--docs", default=None)
+    r.add_argument("--gen-model", default="aws/glm-5")
+    r.add_argument("--eval-model", default="deepseek-v32-az")
+    r.add_argument("--task-count", type=int, default=24)
     add_common(r)
     r.set_defaults(func=cmd_run)
 
