@@ -21,7 +21,7 @@ from .models.gateway import FakeTransport, ModelGateway
 from .phases.base import PhaseContext
 from .phases.demo import DEMO_ORDER, DEMO_PHASES
 from .runtimes.local import LocalRuntime
-from .kinds.browser_webapp.kind import BrowserWebAppKind
+from .core.jsonio import atomic_write_json, read_json
 
 
 def _utcnow() -> str:
@@ -40,22 +40,45 @@ KINDS = {"demo": (DEMO_PHASES, DEMO_ORDER)}
 DYNAMIC_KINDS = ("browser_webapp",)
 
 
-def _build_browser_webapp_kind(args) -> BrowserWebAppKind:
-    import os
+def _resolve_kind_config(run_dir: Path, args) -> dict:
+    """Durable per-run kind config: written once at the initial run, reloaded on resume.
 
+    This lets `resume` reconstruct a dynamic kind WITHOUT the user re-passing
+    --docs/--gen-model/--eval-model/--task-count (the resume subparser has none of
+    them). The config lives at <run_dir>/_config.json, outside any synced app dir.
+    """
+    config_path = run_dir / "_config.json"
+    if config_path.exists():
+        return read_json(config_path)
+    docs = getattr(args, "docs", None) if args is not None else None
+    if not docs:
+        raise EnvforgeExit(ExitCode.FATAL, "browser_webapp requires --docs on the initial run")
+    cfg = {
+        "docs": str(docs),
+        "gen_model": getattr(args, "gen_model", "aws/glm-5"),
+        "eval_model": getattr(args, "eval_model", "deepseek-v32-az"),
+        "task_count": getattr(args, "task_count", 24),
+        "runs_root": str(getattr(args, "runs_root")),
+    }
+    atomic_write_json(config_path, cfg)
+    return cfg
+
+
+def _build_browser_webapp_kind(cfg: dict):
     from .agents.browser_eval import BrowserUseEvalAgent
     from .agents.opencode_agent import OpencodeAgent
-    from browser_use.llm.openai.chat import ChatOpenAI  # lazy; only when actually running
+    from .kinds.browser_webapp.kind import BrowserWebAppKind
+    from browser_use.llm.openai.chat import ChatOpenAI  # lazy; only at real run time
 
-    llm = ChatOpenAI(model=args.eval_model,
+    llm = ChatOpenAI(model=cfg["eval_model"],
                      base_url=os.environ["OPENAI_BASE_URL"],
                      api_key=os.environ["OPENAI_API_KEY"])
     coding = OpencodeAgent()
     # verifier_dir is rebound per-run inside EvaluatePhase via set_verifier_dir().
-    eval_agent = BrowserUseEvalAgent(llm, verifier_dir=Path(args.runs_root))
-    return BrowserWebAppKind(coding, eval_agent, gen_model=args.gen_model,
-                             eval_model=args.eval_model, docs_path=Path(args.docs),
-                             task_count=args.task_count)
+    eval_agent = BrowserUseEvalAgent(llm, verifier_dir=Path(cfg["runs_root"]))
+    return BrowserWebAppKind(coding, eval_agent, gen_model=cfg["gen_model"],
+                             eval_model=cfg["eval_model"], docs_path=Path(cfg["docs"]),
+                             task_count=cfg["task_count"])
 
 
 def _build_orchestrator(runs_root: Path, run_id: str, kind: str, ports_dir: Path, now: str, args=None) -> tuple[Orchestrator, RunStore]:
@@ -65,7 +88,8 @@ def _build_orchestrator(runs_root: Path, run_id: str, kind: str, ports_dir: Path
         rs = RunStore.create(runs_root, run_id, kind, now=now)
     if rs.kind in DYNAMIC_KINDS:
         if rs.kind == "browser_webapp":
-            built = _build_browser_webapp_kind(args)
+            cfg = _resolve_kind_config(rs.run_dir, args)
+            built = _build_browser_webapp_kind(cfg)
             phases, order = built.phases(), built.order()
         else:  # pragma: no cover - defensive
             raise EnvforgeExit(ExitCode.FATAL, f"unbuildable dynamic kind: {rs.kind}")
