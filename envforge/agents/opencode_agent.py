@@ -1,14 +1,36 @@
 # envforge/agents/opencode_agent.py
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 from pathlib import Path
 
 from .base import CodingResult
 
 
+def _default_runner(cmd, *, cwd, stdout, stderr, timeout):
+    # Launch opencode in its own process group so that on timeout we can kill
+    # the entire child tree, not just the direct child. opencode spawns its own
+    # subprocesses; subprocess.run(timeout=...) would only SIGKILL the direct
+    # child and orphan the rest on the 3600s generate timeout.
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, stdout=stdout, stderr=stderr, start_new_session=True
+    )
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        proc.wait()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode)
+
+
 class OpencodeAgent:
-    def __init__(self, *, runner=subprocess.run):
+    def __init__(self, *, runner=_default_runner):
         self._runner = runner
 
     def run(self, prompt: str, *, model: str, cwd: Path, timeout: float, log_path: Path) -> CodingResult:

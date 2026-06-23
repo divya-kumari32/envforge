@@ -1,7 +1,12 @@
 # tests/test_opencode_agent.py
+import os
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
-from envforge.agents.opencode_agent import OpencodeAgent
+import pytest
+from envforge.agents.opencode_agent import OpencodeAgent, _default_runner
 
 
 def test_builds_command_and_succeeds(tmp_path: Path):
@@ -35,3 +40,36 @@ def test_timeout_is_classified(tmp_path: Path):
     res = agent.run("p", model="m", cwd=tmp_path, timeout=5, log_path=tmp_path / "g.log")
     assert not res.ok and res.returncode == 124
     assert "timeout" in (tmp_path / "g.log").read_text().lower()
+
+
+def test_default_runner_kills_child_process_group_on_timeout(tmp_path: Path):
+    # The default runner must launch the child in its own process group and, on
+    # timeout, SIGKILL the whole group so opencode's grandchildren are not
+    # orphaned. We spawn a parent that forks a long-lived grandchild and writes
+    # the grandchild PID to a file; after the timeout fires the grandchild must
+    # be dead too.
+    pidfile = tmp_path / "grandchild.pid"
+    script = (
+        "import os, sys, time\n"
+        "pid = os.fork()\n"
+        "if pid == 0:\n"  # grandchild
+        "    time.sleep(30)\n"
+        "    sys.exit(0)\n"
+        f"open({str(pidfile)!r}, 'w').write(str(pid))\n"
+        "time.sleep(30)\n"
+    )
+    with open(tmp_path / "out.log", "wb") as log:
+        with pytest.raises(subprocess.TimeoutExpired):
+            _default_runner(
+                [sys.executable, "-c", script],
+                cwd=str(tmp_path), stdout=log, stderr=subprocess.STDOUT, timeout=1.0,
+            )
+    # Give the kill a moment to propagate, then confirm the grandchild is gone.
+    for _ in range(50):
+        if pidfile.exists():
+            break
+        time.sleep(0.05)
+    gc_pid = int(pidfile.read_text())
+    time.sleep(0.3)
+    with pytest.raises(ProcessLookupError):
+        os.kill(gc_pid, 0)  # raises if the process no longer exists
