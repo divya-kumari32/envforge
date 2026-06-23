@@ -14,8 +14,14 @@ def _default_runner(cmd, *, cwd, stdout, stderr, timeout):
     # the entire child tree, not just the direct child. opencode spawns its own
     # subprocesses; subprocess.run(timeout=...) would only SIGKILL the direct
     # child and orphan the rest on the 3600s generate timeout.
+    #
+    # Set PWD to cwd: opencode resolves its project from the "current directory"
+    # via the PWD env var, not getcwd(). Popen(cwd=...) chdir's the child but
+    # leaves PWD inherited from the parent, so without this opencode anchors to
+    # the parent's directory and writes files there instead of cwd.
+    env = {**os.environ, "PWD": str(cwd)}
     proc = subprocess.Popen(
-        cmd, cwd=cwd, stdout=stdout, stderr=stderr, start_new_session=True
+        cmd, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True
     )
     try:
         proc.wait(timeout=timeout)

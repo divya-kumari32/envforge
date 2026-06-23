@@ -85,3 +85,14 @@ def test_run_initializes_git_repo_in_cwd(tmp_path):
     assert not (tmp_path / ".git").exists()
     agent.run("p", model="m", cwd=tmp_path, timeout=30, log_path=tmp_path / "g.log")
     assert (tmp_path / ".git").exists()  # cwd is now a git project
+
+
+def test_default_runner_sets_pwd_env_to_cwd(tmp_path):
+    # opencode reads the project's "current directory" from $PWD, not getcwd();
+    # the default runner must set PWD=cwd so opencode anchors to the right dir.
+    from envforge.agents.opencode_agent import _default_runner
+    out = tmp_path / "pwd.txt"
+    with open(tmp_path / "run.log", "wb") as log:
+        _default_runner(["sh", "-c", "echo $PWD > pwd.txt"],
+                        cwd=str(tmp_path), stdout=log, stderr=log, timeout=30)
+    assert out.read_text().strip() == str(tmp_path)
