@@ -40,23 +40,47 @@ envforge status --run <run_id> --runs-root <dir>                    # read durab
 envforge clean  --run <run_id> --runs-root <dir> [--dry-run]        # tar-first safe cleanup
 ```
 
+## browser_webapp kind (Plan 2)
+
+Generates a web app, health-gates it, generates a 24-task function suite + verifiers,
+runs a single browser_use eval pass, and scores it.
+
+Local unit tests use fakes and need no models/browser. The real run needs the
+`browser` extra and an OpenAI-compatible endpoint:
+
+```bash
+uv pip install -e ".[dev,browser]"
+playwright install chromium
+export OPENAI_BASE_URL=<litellm-url> OPENAI_API_KEY=<key>
+envforge run --kind browser_webapp --docs <docs-dir> --runs-root <dir> \
+  --gen-model aws/glm-5 --eval-model deepseek-v32-az
+```
+
+On BlueVela this runs inside the existing enroot image via a hand-written bsub
+(never committed). Per-run config (docs/models/task-count) is persisted to
+`<run_dir>/_config.json`, so `envforge resume --run <id> --runs-root <dir>`
+continues without re-passing those flags.
+
 ## Repository layout
 
 - `envforge/core/` — orchestrator, run-store, status, exits, lock, ports (domain-agnostic).
-- `envforge/models/` — gateway, budget, fallback, error classification.
+- `envforge/models/` — gateway, budget, fallback, error classification, OpenAI transport.
 - `envforge/runtimes/` — `Runtime` interface + portable `LocalRuntime`.
+- `envforge/agents/` — CodingAgent (opencode) + EvalAgent (browser_use) interfaces, impls, fakes.
 - `envforge/phases/` — phase interface + the built-in `demo` phases.
-- `docs/` — the design spec and the implementation plans.
+- `envforge/kinds/browser_webapp/` — the `/api/state` protocol server, health gates, verifier
+  runner, and the generate/health/function-tasks/evaluate/score phases.
+- `docs/` — the design specs and the implementation plans.
 
 ## Branches
 
-`main` is portable and works for everyone (OS models or Claude). IBM/BlueVela
-LSF/enroot specifics live on a separate `bluevela` branch (future work). LSF
-`bsub` scripts are never committed on any branch.
+Until the pipeline runs a proper real experiment end-to-end, **all code stays on
+`main`** (the eventual portable-`main` / IBM-`bluevela` split is deferred until
+then). LSF `bsub` scripts are never committed on any branch.
 
 ## Status
 
-Plan 1 (robustness core) is complete and green. Future plans: the browser
-web-app environment kind + agents (opencode / browser_use), the quality phases
-(function/real tasks, audit, hardening, regression), and the BlueVela runtime
-adapter. See `docs/` for the spec and plans.
+Plan 1 (robustness core) and Plan 2 (the `browser_webapp` kind + opencode/browser_use
+agents) are complete and green. Next: the first real run on BlueVela, then the
+quality phases (audit loops, real tasks, hardening, regression) and the BlueVela
+runtime adapter. See `docs/` for the specs and plans.
