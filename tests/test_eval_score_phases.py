@@ -65,3 +65,36 @@ def test_evaluate_zero_results_is_eval_harness_failure(tmp_path):
     fake = FakeEvalAgent({})
     res = EvaluatePhase(fake).run(_ctx(tmp_path, rs))
     assert not res.ok and res.exit_code is ExitCode.EVAL_HARNESS_FAILURE
+
+
+def test_evaluate_setup_harness_error_is_eval_harness_failure(tmp_path):
+    # If the eval harness raises EvalHarnessError during setup it must be
+    # classified as EVAL_HARNESS_FAILURE, never propagated to FATAL.
+    from envforge.agents.browser_eval import EvalHarnessError
+
+    class BoomEvalAgent(FakeEvalAgent):
+        async def setup(self, server_url):
+            raise EvalHarnessError("seed never captured")
+
+    rs = RunStore.create(tmp_path / "runs", "r", "browser_webapp", now=NOW)
+    _seed_app_with_tasks(rs, 2)
+    res = EvaluatePhase(BoomEvalAgent({})).run(_ctx(tmp_path, rs))
+    assert not res.ok and res.exit_code is ExitCode.EVAL_HARNESS_FAILURE
+
+
+def test_evaluate_resets_state_before_each_task(tmp_path, monkeypatch):
+    # Each task must be preceded by a POST /api/reset so verifiers see the seed.
+    import envforge.kinds.browser_webapp.phases.evaluate as ev
+
+    calls = {"n": 0}
+    monkeypatch.setattr(ev, "_reset_app_state", lambda url: calls.__setitem__("n", calls["n"] + 1))
+
+    rs = RunStore.create(tmp_path / "runs", "r", "browser_webapp", now=NOW)
+    _seed_app_with_tasks(rs, 3)
+    fake = FakeEvalAgent({
+        "task_0": EvalResult("task_0", passed=True),
+        "task_1": EvalResult("task_1", passed=True),
+        "task_2": EvalResult("task_2", passed=True),
+    })
+    res = EvaluatePhase(fake).run(_ctx(tmp_path, rs))
+    assert res.ok and calls["n"] == 3  # one reset per task
