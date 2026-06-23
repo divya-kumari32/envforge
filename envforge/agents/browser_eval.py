@@ -60,6 +60,11 @@ class BrowserUseEvalAgent:
     async def setup(self, server_url: str) -> None:
         self._server_url = server_url
         await self._start_session()
+        # The app's JS only PUTs its initial state to /api/state once the page
+        # has loaded, so we must navigate the browser to the app BEFORE polling
+        # GET /api/state, otherwise the poll always 404s.
+        page = await self._session.get_current_page()
+        await page.goto(server_url)
         import urllib.error
         import urllib.request
         for _ in range(10):

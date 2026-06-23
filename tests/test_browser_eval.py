@@ -5,10 +5,18 @@ import pytest
 from envforge.agents.browser_eval import BrowserUseEvalAgent, EvalHarnessError
 
 
+class FakePage:
+    def __init__(self): self.goto_url = None
+    async def goto(self, url): self.goto_url = url
+
+
 class FakeSession:
-    def __init__(self): self.started = self.killed = False
+    def __init__(self):
+        self.started = self.killed = False
+        self.page = FakePage()
     async def start(self): self.started = True
     async def kill(self): self.killed = True
+    async def get_current_page(self): return self.page
 
 
 class FakeHistory:
@@ -107,6 +115,42 @@ def test_setup_tears_down_session_when_seed_never_ready(tmp_path: Path):
     with pytest.raises(EvalHarnessError):
         asyncio.run(agent.setup("http://127.0.0.1:1"))
     assert sess.killed and agent._session is None  # torn down, not leaked
+
+
+def test_setup_navigates_to_server_url_before_polling(tmp_path: Path):
+    # setup() must navigate the browser to the app URL so the app's JS PUTs its
+    # seed state, otherwise GET /api/state would 404 forever. Use a real
+    # StateServer whose seed gets captured when the fake page "loads".
+    from envforge.kinds.browser_webapp.protocol import StateServer
+
+    server = StateServer(tmp_path, port=0)
+    server.start()
+    sess = FakeSession()
+
+    # Make goto() also seed the server state, mimicking the app's JS PUT-on-load.
+    import urllib.request
+    orig_goto = sess.page.goto
+    async def goto_and_seed(url):
+        await orig_goto(url)
+        req = urllib.request.Request(
+            f"{server.url}/api/state", data=b'{"seeded": true}',
+            method="PUT", headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=2).read()
+    sess.page.goto = goto_and_seed
+
+    agent = BrowserUseEvalAgent(
+        llm=object(), verifier_dir=tmp_path,
+        session_factory=lambda: sess,
+        agent_factory=lambda **kw: FakeAgent(),
+        sleep=lambda s: asyncio.sleep(0),
+    )
+    try:
+        asyncio.run(agent.setup(server.url))
+        assert sess.page.goto_url == server.url  # navigated to app before poll
+    finally:
+        asyncio.run(agent.teardown())
+        server.stop()
 
 
 def test_set_verifier_dir(tmp_path):
