@@ -56,3 +56,33 @@ def test_generate_function_tasks_wrong_count_fails(tmp_path):
     agent = FakeCodingAgent([{"files": {"function-tasks.json": _tasks_json(5)}, "ok": True}])
     res = GenerateFunctionTasksPhase(agent, model="m", expected_count=24).run(_ctx(tmp_path, rs))
     assert not res.ok and res.exit_code is ExitCode.TASKS_INVALID
+
+
+def test_generate_app_stages_docs_then_cleans_up(tmp_path):
+    # Docs must be staged under the agent cwd (so the agent can read them with a
+    # relative path), then removed so they aren't part of the generated app.
+    rs = RunStore.create(tmp_path / "runs", "r", "browser_webapp", now=NOW)
+    docs = tmp_path / "docs"; docs.mkdir()
+    (docs / "guide.md").write_text("how payments work")
+
+    saw_staged = {}
+
+    class DocAwareFake(FakeCodingAgent):
+        def run(self, prompt, *, model, cwd, timeout, log_path):
+            staged = Path(cwd) / "_source_docs" / "guide.md"
+            saw_staged["present"] = staged.exists()
+            saw_staged["relative_in_prompt"] = "./_source_docs/" in prompt
+            return super().run(prompt, model=model, cwd=cwd, timeout=timeout, log_path=log_path)
+
+    agent = DocAwareFake([{"files": {"index.html": "<h1>a</h1>", "server.py": "x=1"}, "ok": True}])
+    res = GenerateAppPhase(agent, model="m", docs_path=docs).run(_ctx(tmp_path, rs))
+    assert res.ok
+    assert saw_staged["present"] and saw_staged["relative_in_prompt"]  # staged + referenced relatively
+    assert not (Path(res.result["app_dir"]) / "_source_docs").exists()  # cleaned up
+
+
+def test_generate_app_fails_when_docs_path_missing(tmp_path):
+    rs = RunStore.create(tmp_path / "runs", "r", "browser_webapp", now=NOW)
+    agent = FakeCodingAgent([{"files": {"index.html": "x", "server.py": "y"}, "ok": True}])
+    res = GenerateAppPhase(agent, model="m", docs_path=tmp_path / "nope").run(_ctx(tmp_path, rs))
+    assert not res.ok and res.exit_code is ExitCode.TASKS_INVALID
