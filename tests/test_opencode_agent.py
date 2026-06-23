@@ -73,3 +73,15 @@ def test_default_runner_kills_child_process_group_on_timeout(tmp_path: Path):
     time.sleep(0.3)
     with pytest.raises(ProcessLookupError):
         os.kill(gc_pid, 0)  # raises if the process no longer exists
+
+
+def test_run_initializes_git_repo_in_cwd(tmp_path):
+    # opencode anchors file writes to a git root, so the agent must make cwd a
+    # git project before invoking opencode (else files land outside cwd).
+    def fake_runner(cmd, cwd, stdout, stderr, timeout):
+        stdout.write(b"ok\n")
+        return subprocess.CompletedProcess(cmd, 0)
+    agent = OpencodeAgent(runner=fake_runner)
+    assert not (tmp_path / ".git").exists()
+    agent.run("p", model="m", cwd=tmp_path, timeout=30, log_path=tmp_path / "g.log")
+    assert (tmp_path / ".git").exists()  # cwd is now a git project

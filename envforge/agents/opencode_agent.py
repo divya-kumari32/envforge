@@ -34,6 +34,14 @@ class OpencodeAgent:
         self._runner = runner
 
     def run(self, prompt: str, *, model: str, cwd: Path, timeout: float, log_path: Path) -> CodingResult:
+        # opencode anchors its project root — and therefore where it writes files —
+        # to the nearest enclosing git repository, NOT the process cwd. If cwd is
+        # not inside a git repo, opencode writes files into some other repo entirely.
+        # Make cwd its own git project so generated files land here.
+        cwd_path = Path(cwd)
+        if not (cwd_path / ".git").exists():
+            subprocess.run(["git", "init", "-q"], cwd=str(cwd_path),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         cmd = ["opencode", "run", "--model", model, prompt]
         Path(log_path).parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "wb") as log:
