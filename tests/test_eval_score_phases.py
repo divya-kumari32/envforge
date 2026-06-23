@@ -98,3 +98,19 @@ def test_evaluate_resets_state_before_each_task(tmp_path, monkeypatch):
     })
     res = EvaluatePhase(fake).run(_ctx(tmp_path, rs))
     assert res.ok and calls["n"] == 3  # one reset per task
+
+
+def test_evaluate_generic_harness_exception_is_eval_harness_failure(tmp_path):
+    # A non-EvalHarnessError raised inside the eval run (e.g. a browser_use
+    # internal error) must still classify as EVAL_HARNESS_FAILURE, not FATAL.
+    from envforge.core.exits import ExitCode
+    rs = RunStore.create(tmp_path / "runs", "r", "browser_webapp", now=NOW)
+    _seed_app_with_tasks(rs, 2)
+
+    class BoomSetupAgent(FakeEvalAgent):
+        async def setup(self, server_url):
+            raise RuntimeError("browser_use blew up")
+
+    res = EvaluatePhase(BoomSetupAgent({})).run(_ctx(tmp_path, rs))
+    assert not res.ok and res.exit_code is ExitCode.EVAL_HARNESS_FAILURE
+    assert "RuntimeError" in res.reason

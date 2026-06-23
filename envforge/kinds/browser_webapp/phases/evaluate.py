@@ -43,11 +43,14 @@ class EvaluatePhase:
         server.start()
         try:
             results = asyncio.run(self._run_all(server.url, tasks, ctx.runstore.run_dir / "tasks"))
-        except EvalHarnessError as exc:
-            # The eval harness (browser setup / agent driving) failed in a way
-            # that is not a fatal orchestrator bug — classify it as an eval
-            # harness failure rather than letting it propagate to FATAL.
-            return PhaseResult.fail(ExitCode.EVAL_HARNESS_FAILURE, f"eval harness failed: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            # Any failure escaping the eval run (browser setup/teardown, the
+            # browser_use driver, async plumbing) is an EVAL-HARNESS failure, not
+            # a fatal orchestrator bug. Per-task errors are already caught inside
+            # _run_all and returned as EvalResults, so anything reaching here is
+            # harness-domain — classify it cleanly instead of propagating to FATAL.
+            kind = type(exc).__name__ if not isinstance(exc, EvalHarnessError) else "EvalHarnessError"
+            return PhaseResult.fail(ExitCode.EVAL_HARNESS_FAILURE, f"eval harness failed ({kind}): {exc}")
         finally:
             server.stop()
             ctx.ports.release(port)
