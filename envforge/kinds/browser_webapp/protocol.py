@@ -34,7 +34,13 @@ class _Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/state":
             if not self._state.has_state:
-                self._send_json(404, {"error": "no state yet"})
+                # Bare 404 (no JSON body): the pre-state "not found" must not feed
+                # apps misleading content. Apps commonly do
+                # `errorData.error || ("HTTP " + status)` — a JSON {"error": ...}
+                # body hides the 404 status and breaks their seed-on-load logic.
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
             else:
                 self._send_json(200, self._state.current)
             return
