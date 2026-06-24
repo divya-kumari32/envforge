@@ -59,6 +59,7 @@ def _resolve_kind_config(run_dir: Path, args) -> dict:
         "eval_model": getattr(args, "eval_model", "deepseek-v32-az"),
         "task_count": getattr(args, "task_count", 24),
         "runs_root": str(getattr(args, "runs_root")),
+        "gen_timeout": float(getattr(args, "gen_timeout", 3600.0) or 3600.0),
     }
     atomic_write_json(config_path, cfg)
     return cfg
@@ -78,7 +79,7 @@ def _build_browser_webapp_kind(cfg: dict):
     eval_agent = BrowserUseEvalAgent(llm, verifier_dir=Path(cfg["runs_root"]))
     return BrowserWebAppKind(coding, eval_agent, gen_model=cfg["gen_model"],
                              eval_model=cfg["eval_model"], docs_path=Path(cfg["docs"]),
-                             task_count=cfg["task_count"])
+                             task_count=cfg["task_count"], gen_timeout=cfg.get("gen_timeout", 3600.0))
 
 
 def _build_orchestrator(runs_root: Path, run_id: str, kind: str, ports_dir: Path, now: str, args=None) -> tuple[Orchestrator, RunStore]:
@@ -192,6 +193,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--gen-model", default="aws/glm-5")
     r.add_argument("--eval-model", default="deepseek-v32-az")
     r.add_argument("--task-count", type=int, default=24)
+    r.add_argument("--gen-timeout", type=float, default=3600.0,
+                   help="per-phase coding-agent (opencode) timeout in seconds for generate_app/function_tasks")
     add_common(r)
     r.set_defaults(func=cmd_run)
 
