@@ -158,3 +158,26 @@ def test_set_verifier_dir(tmp_path):
     a = BrowserUseEvalAgent(llm=object(), verifier_dir=tmp_path)
     a.set_verifier_dir(tmp_path / "v")
     assert a._verifier_dir == tmp_path / "v"
+
+
+def test_start_timeout_raises_eval_harness_error_and_tears_down(tmp_path):
+    # A deadlocked browser launch must fail fast (classified), not hang forever.
+    class HangingSession(FakeSession):
+        async def start(self):
+            await asyncio.sleep(10)  # never completes within the start timeout
+    sess = HangingSession()
+    agent = BrowserUseEvalAgent(
+        llm=object(), verifier_dir=tmp_path, start_timeout=0.05,
+        session_factory=lambda: sess,
+        agent_factory=lambda **kw: FakeAgent(),
+        sleep=lambda s: asyncio.sleep(0),
+    )
+    with pytest.raises(EvalHarnessError):
+        asyncio.run(agent.setup("http://x"))
+    assert sess.killed  # torn down on the timeout, not leaked
+
+
+def test_default_session_factory_passes_no_sandbox_args():
+    # The container needs --no-sandbox etc. to launch chromium as root.
+    from envforge.agents.browser_eval import _EXTRA_CHROME_ARGS
+    assert "--no-sandbox" in _EXTRA_CHROME_ARGS and "--disable-extensions" in _EXTRA_CHROME_ARGS

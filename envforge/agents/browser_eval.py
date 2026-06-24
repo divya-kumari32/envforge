@@ -16,6 +16,18 @@ def _is_retryable(exc: Exception) -> bool:
     return isinstance(exc, (ConnectionError, TimeoutError, OSError))
 
 
+# Chromium flags required to launch headless in a container as root: --no-sandbox
+# (chromium refuses to run as root without it), plus disabling gpu/rasterizer and
+# extensions (the default browser_use profile downloads extensions, which hangs
+# the launch in a sandboxed/offline-ish container).
+_EXTRA_CHROME_ARGS = [
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-extensions",
+    "--no-sandbox",
+]
+
+
 class BrowserUseEvalAgent:
     def __init__(
         self,
@@ -25,6 +37,7 @@ class BrowserUseEvalAgent:
         max_steps: int = 50,
         timeout: float = 300.0,
         max_restarts: int = 3,
+        start_timeout: float = 120.0,
         session_factory=None,
         agent_factory=None,
         sleep=asyncio.sleep,
@@ -34,6 +47,7 @@ class BrowserUseEvalAgent:
         self._max_steps = max_steps
         self._timeout = timeout
         self._max_restarts = max_restarts
+        self._start_timeout = start_timeout
         self._session_factory = session_factory or self._default_session_factory
         self._agent_factory = agent_factory or self._default_agent_factory
         self._sleep = sleep
@@ -46,7 +60,7 @@ class BrowserUseEvalAgent:
     @staticmethod
     def _default_session_factory():
         from browser_use import BrowserSession  # lazy import
-        return BrowserSession(headless=True, keep_alive=True)
+        return BrowserSession(headless=True, keep_alive=True, args=_EXTRA_CHROME_ARGS)
 
     @staticmethod
     def _default_agent_factory(*, task, llm, session, max_steps):
@@ -54,8 +68,14 @@ class BrowserUseEvalAgent:
         return Agent(task=task, llm=llm, browser_session=session, max_steps=max_steps)
 
     async def _start_session(self):
+        # Hard timeout so a deadlocked browser launch fails fast and classifies
+        # cleanly (EvalHarnessError) instead of hanging the whole job for hours.
         self._session = self._session_factory()
-        await self._session.start()
+        try:
+            await asyncio.wait_for(self._session.start(), timeout=self._start_timeout)
+        except asyncio.TimeoutError:
+            await self.teardown()
+            raise EvalHarnessError(f"browser session did not start within {self._start_timeout}s")
 
     async def setup(self, server_url: str) -> None:
         self._server_url = server_url
