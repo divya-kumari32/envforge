@@ -57,7 +57,7 @@ named, testable component here (§12). The headline goals, drawn from those fail
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Run target | **Infra-agnostic core + first-class adapters for BOTH local/public and BlueVela LSF** | Most public users run OS models on generic machines; we also run on BlueVela. |
+| Run target | **Infra-agnostic core + first-class adapters for BOTH local/public and an HPC cluster** | Most public users run OS models on generic machines; we also run on the cluster. |
 | Generation agent | **opencode behind a swappable `CodingAgent` interface** | opencode is OS-model-proven; the Claude Agent SDK is unsupported/fragile with OS models (verified). |
 | Eval rollout | **`browser_use` behind a swappable `EvalAgent` (AgentRunner-style) interface** | This is webarena-infinity's proven arrangement; coding agents don't browse natively. |
 | Model abstraction | **One shared model gateway** that ALL model traffic flows through (gen + eval + audit) | Budget, caps, selection, and fallback live in one place; even black-box agents (opencode, browser_use) are covered by pointing them at the gateway endpoint. |
@@ -67,7 +67,7 @@ named, testable component here (§12). The headline goals, drawn from those fail
 ### On "the Claude Agent SDK with any OS model"
 
 We verified this against current docs: pointing the Claude Agent SDK at a LiteLLM
-Anthropic-`/v1/messages` shim is *technically possible* (and is how the internal BV config
+Anthropic-`/v1/messages` shim is *technically possible* (and is how the internal cluster config
 works) but is **unsupported and fragile for OS models** — the SDK assumes Claude-trained
 tool-use trajectories; weaker OS models emit malformed tool calls, loop, and have no
 graceful recovery. Since reliable OS-model support is an explicit goal, generation uses
@@ -87,7 +87,7 @@ The spec describes the **full** target system. The implementation plan delivers 
    Result: a working, testable multi-model pipeline.
 2. **Quality phases.** function tasks, audit loop, real tasks, hardening rounds, final
    regression — each plugging into the already-hardened core.
-3. **BlueVela runtime adapter.** LSF/enroot, behind the same `Runtime` interface.
+3. **Cluster runtime adapter.** A batch scheduler + container runtime, behind the same `Runtime` interface.
 
 ---
 
@@ -111,7 +111,7 @@ envforge/
 ├── runtimes/
 │   ├── base.py                # Runtime interface: prepare_env / run / sync_out / free_gb
 │   ├── local.py               # laptop / generic Linux
-│   └── bluevela.py            # LSF/enroot adapter (single-process setup)
+│   └── cluster.py             # batch-scheduler/container adapter (single-process setup)
 ├── agents/
 │   ├── base.py                # CodingAgent + EvalAgent interfaces (shared across kinds)
 │   └── opencode.py            # OpencodeAgent (CodingAgent impl) — generic
@@ -182,18 +182,18 @@ Every model call in the system — generation, audit, hardening, eval rollout �
 ## 8. Runtime backends (`runtimes/`) — single-process setup
 
 `Runtime` interface: `prepare_env()`, `run(cmd)`, `sync_out()`, `free_gb()`. The interface
-and the portable implementation live on `main`; the IBM-specific implementation lives only
-on the `bluevela` branch (see §16). The active runtime is selected by config, so `main`
+and the portable implementation live on `main`; the cluster-specific implementation lives only
+on an infra-specific branch (see §16). The active runtime is selected by config, so `main`
 never imports cluster-specific code.
 
 - **local.py (on `main`).** venv/uv on the host; ports on localhost. The portable/public
   path — what every public user runs.
-- **bluevela.py (on the `bluevela` branch only).** A **single enroot start** that sets up
+- **cluster.py (on the cluster branch only).** A **single container start** that sets up
   the venv *and* runs the pipeline in one process (kills the two-start venv-loss bug, #6); a
   preflight import check fails fast if deps are missing (#4); `sync_out` writes the app dir
   but **never** the run-store/status (those live outside it, #7); disk handling is
   **detect-only**, never auto-deletes backups (#18 and the cleanup-trap rule). The
-  enroot/uv.lock/pyproject setup fixes (#1, #5) live here too, since they are
+  container/uv.lock/pyproject setup fixes (#1, #5) live here too, since they are
   container-specific.
 
 ---
@@ -273,7 +273,7 @@ answer-correctness verifier) plug in with **zero core changes** — each its own
 | 2 | playwright missing | `EvalAgent` uses `browser_use` (same stack), behind interface |
 | 3 | health false-PASS via stale seed | `health.py` restarts server between gates |
 | 4 | `requests` under system python | preflight import gate, single venv |
-| 6 | two-enroot-start venv loss | `bluevela.py` single-process setup |
+| 6 | two-container-start venv loss | `cluster.py` single-process setup |
 | 7 | sync `--delete` wiped STATUS | run-store / status live **outside** the synced dir |
 | 8–11 | budget exhaustion (recurring) | `budget.py` hard caps → clean `BUDGET_EXCEEDED` exit |
 | 12 | endpoint timeouts | `fallback.py` classify + backoff + endpoint swap |
@@ -291,8 +291,8 @@ answer-correctness verifier) plug in with **zero core changes** — each its own
 TDD throughout. Core units (run-store, lock, ports, budget, exits, gateway fallback) are
 pure Python and unit-tested locally — no cluster needed. Agents and runtimes are tested
 behind their interfaces with fakes. One **end-to-end smoke test** (generate → eval a trivial
-environment with a small local model) gates the vertical slice. BlueVela-specific behavior
-runs in the enroot container, as today.
+environment with a small local model) gates the vertical slice. Cluster-specific behavior
+runs in the container, as today.
 
 ---
 
@@ -328,7 +328,7 @@ profile** (e.g. a LiteLLM/vLLM endpoint), differing only in the `models/` sectio
 ## 16. Repository branch strategy
 
 The repo is split so that `main` is **universal** — it runs for any user on any machine —
-and IBM/BlueVela specifics are quarantined on their own branch.
+and cluster-specific infra is quarantined on its own branch.
 
 ### `main` — portable, works for everyone
 
@@ -345,21 +345,22 @@ Everything whose behavior is independent of where the pipeline runs:
 A public user clones `main`, points the model gateway at their endpoint (OS model or
 Claude), and everything works. `main` never imports cluster-specific code.
 
-### `bluevela` — IBM-only, branched off `main`
+### the cluster branch — infra-only, branched off `main`
 
-Everything specific to the IBM BlueVela LSF/enroot environment:
+Everything specific to the HPC cluster's batch-scheduler/container environment:
 
-- `runtimes/bluevela.py` (single enroot start, preflight import, sync-out rules).
-- Container/`uv.lock`/`pyproject` setup fixes (#1, #5, #6) and enroot-specific exit codes.
+- `runtimes/cluster.py` (single container start, preflight import, sync-out rules).
+- Container/`uv.lock`/`pyproject` setup fixes (#1, #5, #6) and container-specific exit codes.
 - Cluster disk/quota handling beyond the portable `free_gb` detect-only logic.
 
-The `bluevela` branch tracks `main` (regularly merges `main` forward) and adds only the
-runtime adapter and its IBM-specific concerns. Build order: Plans 1–3 land on `main`;
-Plan 4 (the BlueVela adapter) lands on `bluevela`.
+The cluster branch tracks `main` (regularly merges `main` forward) and adds only the
+runtime adapter and its cluster-specific concerns. Build order: Plans 1–3 land on `main`;
+Plan 4 (the cluster adapter) lands on the cluster branch.
 
-### bsub scripts are never committed
+### Submission scripts are never committed
 
-LSF `bsub` scripts (`*.bsub`) are **never** committed to the repository on any branch —
-they are gitignored, written locally, and `scp`'d to BlueVela. This matches the standing
-`webarena-infinity` rule. The repo therefore contains no submission scripts; the `bluevela`
-branch documents how to run, not the runnable bsubs themselves.
+Job-submission scripts are **never** committed to the repository on any branch —
+submission scripts are gitignored, not committed; they are written locally and `scp`'d to
+the cluster. This matches the same convention. The repo therefore contains no submission
+scripts; the cluster branch documents how to run, not the runnable job-submission scripts
+themselves.

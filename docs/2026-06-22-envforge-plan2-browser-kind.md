@@ -17,7 +17,7 @@
 - Third-party browser/model objects are **dependency-injected** (constructor params with real defaults) so logic is testable with fakes.
 - Run tests with `env -u VIRTUAL_ENV uv run pytest …` for pristine output.
 - Commit messages imperative, no `Co-Authored-By`.
-- **Branch:** commit directly to `main` (per the amended branch policy — all code on main until the first real exp). **Never commit `*.bsub`.**
+- **Branch:** commit directly to `main` (per the amended branch policy — all code on main until the first real exp). **Submission scripts are gitignored, not committed.**
 
 ---
 
@@ -497,9 +497,9 @@ def test_builds_command_and_succeeds(tmp_path: Path):
         stdout.write(b"generated ok\n")
         return subprocess.CompletedProcess(cmd, 0)
     agent = OpencodeAgent(runner=fake_runner)
-    res = agent.run("make app", model="aws/glm-5", cwd=tmp_path, timeout=30, log_path=tmp_path / "gen.log")
+    res = agent.run("make app", model="litellm/your-coding-model", cwd=tmp_path, timeout=30, log_path=tmp_path / "gen.log")
     assert res.ok and res.returncode == 0
-    assert captured["cmd"] == ["opencode", "run", "--model", "aws/glm-5", "make app"]
+    assert captured["cmd"] == ["opencode", "run", "--model", "litellm/your-coding-model", "make app"]
     assert captured["cwd"] == str(tmp_path)
     assert b"generated ok" in (tmp_path / "gen.log").read_bytes()
 
@@ -1136,13 +1136,13 @@ from envforge.models.openai_transport import OpenAITransport
 from envforge.models.gateway import ModelSpec, ModelResponse
 from envforge.models.errors import TransportError
 
-SPEC = ModelSpec(provider="litellm", model="aws/glm-5", endpoints=["http://ep/v1"])
+SPEC = ModelSpec(provider="litellm", model="litellm/your-coding-model", endpoints=["http://ep/v1"])
 
 
 def test_successful_call_parses_text_and_cost():
     def fake_post(url, headers, payload):
         assert url == "http://ep/v1/chat/completions"
-        assert payload["model"] == "aws/glm-5"
+        assert payload["model"] == "litellm/your-coding-model"
         return 200, {"choices": [{"message": {"content": "hello"}}],
                      "usage": {"prompt_tokens": 3, "completion_tokens": 7}}
     t = OpenAITransport("sk-key", http_post=fake_post)
@@ -1756,7 +1756,7 @@ def _build_browser_webapp_kind(args):
                              eval_model=args.eval_model, docs_path=Path(args.docs),
                              task_count=args.task_count)
 ```
-In `_build_orchestrator`, branch on `rs.kind`: for `demo` use `KINDS["demo"]`; for `browser_webapp` build the kind via `_build_browser_webapp_kind(args)` and use `kind.phases()/kind.order()`. Add the `run` subparser args: `--docs`, `--gen-model` (default `aws/glm-5`), `--eval-model` (default `deepseek-v32-az`), `--task-count` (default 24), and allow `--kind browser_webapp`.
+In `_build_orchestrator`, branch on `rs.kind`: for `demo` use `KINDS["demo"]`; for `browser_webapp` build the kind via `_build_browser_webapp_kind(args)` and use `kind.phases()/kind.order()`. Add the `run` subparser args: `--docs`, `--gen-model` (default `litellm/your-coding-model`), `--eval-model` (default `your-eval-model`), `--task-count` (default 24), and allow `--kind browser_webapp`.
 
 > Note: the real `BrowserUseEvalAgent.verifier_dir` must point at the generated app's `verifiers/`. Since that path is only known after `generate_app`, have `EvaluatePhase`/`HealthGatePhase` pass the per-run verifier dir to the agent at call time, OR construct the eval agent inside the kind with a late-bound verifier dir. Implement by giving `BrowserUseEvalAgent` a `set_verifier_dir(path)` setter the evaluate phase calls with `app_dir/"verifiers"` before running. Add that one-line setter + a test.
 
@@ -1801,7 +1801,7 @@ git commit -m "Assemble BrowserWebAppKind and register browser_webapp in the CLI
 
 **Files:**
 - Modify: `envforge/pyproject.toml` (add optional `browser` extra: `browser-use`, `playwright`)
-- Modify: `envforge/README.md` (document the browser_webapp kind + the BV run recipe)
+- Modify: `envforge/README.md` (document the browser_webapp kind + the cluster run recipe)
 - Test: full suite.
 
 **Interfaces:**
@@ -1828,12 +1828,12 @@ Local unit tests use fakes and need no models/browser. The real run needs the
 
     uv pip install -e ".[dev,browser]"
     playwright install chromium
-    export OPENAI_BASE_URL=<litellm-url> OPENAI_API_KEY=<key>
+    export OPENAI_BASE_URL=<endpoint-url> OPENAI_API_KEY=<key>
     envforge run --kind browser_webapp --docs <docs-dir> --runs-root <dir> \
-      --gen-model aws/glm-5 --eval-model deepseek-v32-az
+      --gen-model litellm/your-coding-model --eval-model your-eval-model
 
-On BlueVela this runs inside the existing enroot image via a hand-written bsub
-(never committed).
+On the cluster this runs inside a prebuilt container image via a hand-written
+job-submission script (not committed).
 ```
 
 - [ ] **Step 3: Run the full suite**
@@ -1859,7 +1859,7 @@ git commit -m "Add optional browser extra and document the browser_webapp kind"
 - §6 protocol server → Task 3. ✓
 - §7 phases (generate_app, health_gate, generate_function_tasks, evaluate, score) → Tasks 9,11,10. ✓
 - §8 model traffic/budget → Task 8 (OpenAITransport for own calls); opencode/browser_use direct-to-endpoint wired in Task 11 CLI. ✓
-- §10 testing (fakes local; integration BV-gated) → fakes in Task 1; integration test with fakes in Task 11; real BV run is the post-implementation manual step. ✓
+- §10 testing (fakes local; integration cluster-gated) → fakes in Task 1; integration test with fakes in Task 11; the real cluster run is the post-implementation manual step. ✓
 
 **2. Placeholder scan:** every code/test step has complete content; prompts are written out; no "TBD"/"similar to". The one prose note in Task 11 (verifier-dir late-binding) is resolved with concrete code in Steps 6. ✓
 
@@ -1870,5 +1870,5 @@ git commit -m "Add optional browser extra and document the browser_webapp kind"
 ## Out of scope (later plans)
 
 - **Plan 3:** audit-eval loops (2b/3b), real tasks (3a), hardening rounds (4), final regression (5); bounded model-driven health repair (Plan 2 fails clean on unhealthy).
-- **Plan 4 / `bluevela` branch (after first real exp):** LSF/enroot runtime adapter; the main/bluevela branch split.
+- **Plan 4 / infra-specific branch (after first real exp):** batch-scheduler/container runtime adapter; the main/cluster branch split.
 - **Deferred Plan-1 item now relevant:** when a phase makes a gateway call that can raise `BudgetExceeded`, translate it to `PhaseResult.fail(ExitCode.BUDGET_EXCEEDED, …)` (no Plan-2 phase calls the gateway yet, so not triggered here).

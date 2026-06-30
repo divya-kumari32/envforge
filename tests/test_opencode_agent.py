@@ -17,9 +17,9 @@ def test_builds_command_and_succeeds(tmp_path: Path):
         stdout.write(b"generated ok\n")
         return subprocess.CompletedProcess(cmd, 0)
     agent = OpencodeAgent(runner=fake_runner)
-    res = agent.run("make app", model="aws/glm-5", cwd=tmp_path, timeout=30, log_path=tmp_path / "gen.log")
+    res = agent.run("make app", model="litellm/test-model", cwd=tmp_path, timeout=30, log_path=tmp_path / "gen.log")
     assert res.ok and res.returncode == 0
-    assert captured["cmd"] == ["opencode", "run", "--model", "aws/glm-5", "make app"]
+    assert captured["cmd"] == ["opencode", "run", "--model", "litellm/test-model", "make app"]
     assert captured["cwd"] == str(tmp_path)
     assert b"generated ok" in (tmp_path / "gen.log").read_bytes()
 

@@ -11,7 +11,7 @@ from envforge.models.gateway import ModelGateway, ModelSpec, FakeTransport
 from envforge.models.budget import BudgetLedger
 from envforge.runtimes.local import LocalRuntime
 from envforge.phases.base import PhaseContext, PhaseResult
-from envforge.phases.demo import DEMO_PHASES, DEMO_ORDER, GeneratePhase
+from envforge.phases.test import TEST_PHASES, TEST_ORDER, GeneratePhase
 
 NOW = "2026-06-19T00:00:00Z"
 
@@ -30,18 +30,18 @@ def _ctx(tmp_path: Path, runstore: RunStore, config: dict) -> PhaseContext:
 
 
 def test_full_run_marks_all_done_and_returns_ok(tmp_path: Path):
-    rs = RunStore.create(tmp_path / "runs", "r", "demo", now=NOW)
-    orch = Orchestrator(rs, DEMO_PHASES, DEMO_ORDER, _ctx(tmp_path, rs, {}))
+    rs = RunStore.create(tmp_path / "runs", "r", "test", now=NOW)
+    orch = Orchestrator(rs, TEST_PHASES, TEST_ORDER, _ctx(tmp_path, rs, {}))
     code = orch.run()
     assert code is ExitCode.OK
-    for name in DEMO_ORDER:
+    for name in TEST_ORDER:
         assert rs.step_status(name) is StepStatus.DONE
 
 
 def test_failed_phase_returns_classified_code(tmp_path: Path):
-    rs = RunStore.create(tmp_path / "runs", "r", "demo", now=NOW)
+    rs = RunStore.create(tmp_path / "runs", "r", "test", now=NOW)
     cfg = {"fail_eval": (ExitCode.EVAL_HARNESS_FAILURE, "forced")}
-    orch = Orchestrator(rs, DEMO_PHASES, DEMO_ORDER, _ctx(tmp_path, rs, cfg))
+    orch = Orchestrator(rs, TEST_PHASES, TEST_ORDER, _ctx(tmp_path, rs, cfg))
     code = orch.run()
     assert code is ExitCode.EVAL_HARNESS_FAILURE
     assert rs.step_status("eval") is StepStatus.FAILED
@@ -50,20 +50,20 @@ def test_failed_phase_returns_classified_code(tmp_path: Path):
 
 
 def test_resume_skips_done_steps(tmp_path: Path):
-    rs = RunStore.create(tmp_path / "runs", "r", "demo", now=NOW)
+    rs = RunStore.create(tmp_path / "runs", "r", "test", now=NOW)
     rs.set_step("generate", StepStatus.DONE, result={"files": 3, "port": 8200}, now=NOW)
 
     class BoomGenerate(GeneratePhase):
         def run(self, ctx):  # would fail if called
             raise AssertionError("generate should have been skipped")
 
-    phases = [BoomGenerate()] + DEMO_PHASES[1:]
-    orch = Orchestrator(rs, phases, DEMO_ORDER, _ctx(tmp_path, rs, {}))
+    phases = [BoomGenerate()] + TEST_PHASES[1:]
+    orch = Orchestrator(rs, phases, TEST_ORDER, _ctx(tmp_path, rs, {}))
     assert orch.run() is ExitCode.OK
 
 
 def test_envforge_exit_inside_phase_is_classified(tmp_path: Path):
-    rs = RunStore.create(tmp_path / "runs", "r", "demo", now=NOW)
+    rs = RunStore.create(tmp_path / "runs", "r", "test", now=NOW)
 
     class RaisingHealth:
         name = "health"
@@ -71,14 +71,14 @@ def test_envforge_exit_inside_phase_is_classified(tmp_path: Path):
         def run(self, ctx):
             raise EnvforgeExit(ExitCode.APP_UNHEALTHY, "no boot")
 
-    phases = [DEMO_PHASES[0], RaisingHealth(), DEMO_PHASES[2]]
-    orch = Orchestrator(rs, phases, DEMO_ORDER, _ctx(tmp_path, rs, {}))
+    phases = [TEST_PHASES[0], RaisingHealth(), TEST_PHASES[2]]
+    orch = Orchestrator(rs, phases, TEST_ORDER, _ctx(tmp_path, rs, {}))
     assert orch.run() is ExitCode.APP_UNHEALTHY
     assert rs.step_status("health") is StepStatus.FAILED
 
 
 def test_unexpected_exception_becomes_fatal(tmp_path: Path):
-    rs = RunStore.create(tmp_path / "runs", "r", "demo", now=NOW)
+    rs = RunStore.create(tmp_path / "runs", "r", "test", now=NOW)
 
     class BadHealth:
         name = "health"
@@ -86,16 +86,16 @@ def test_unexpected_exception_becomes_fatal(tmp_path: Path):
         def run(self, ctx):
             raise RuntimeError("kaboom")
 
-    phases = [DEMO_PHASES[0], BadHealth(), DEMO_PHASES[2]]
-    orch = Orchestrator(rs, phases, DEMO_ORDER, _ctx(tmp_path, rs, {}))
+    phases = [TEST_PHASES[0], BadHealth(), TEST_PHASES[2]]
+    orch = Orchestrator(rs, phases, TEST_ORDER, _ctx(tmp_path, rs, {}))
     assert orch.run() is ExitCode.FATAL
     assert rs.exit_code is ExitCode.FATAL
 
 
 def test_final_status_has_no_stale_running(tmp_path: Path):
     import json
-    rs = RunStore.create(tmp_path / "runs", "r", "demo", now=NOW)
-    orch = Orchestrator(rs, DEMO_PHASES, DEMO_ORDER, _ctx(tmp_path, rs, {}))
+    rs = RunStore.create(tmp_path / "runs", "r", "test", now=NOW)
+    orch = Orchestrator(rs, TEST_PHASES, TEST_ORDER, _ctx(tmp_path, rs, {}))
     assert orch.run() is ExitCode.OK
     status = json.loads((tmp_path / "status" / "STATUS.json").read_text())
     assert status["phase"] == "done"

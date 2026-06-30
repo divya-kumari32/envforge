@@ -1,0 +1,26 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "_comment": [
+    "Generic, secret-free opencode provider config for envforge's coding agent.",
+    "Copy to ~/.config/opencode/opencode.json (or point OPENCODE_CONFIG at it).",
+    "It defines an OpenAI-compatible provider named 'litellm' that reads its URL",
+    "and key from the environment (OPENAI_BASE_URL / OPENAI_API_KEY) at run time,",
+    "so NO secrets are stored in this file. Add the model id(s) your endpoint",
+    "serves under 'models', then pass --gen-model litellm/<model-id> to envforge.",
+    "Works with any OpenAI-compatible endpoint: LiteLLM, vLLM, Ollama, OpenAI, etc."
+  ],
+  "provider": {
+    "litellm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "litellm",
+      "options": {
+        "baseURL": "{env:OPENAI_BASE_URL}",
+        "apiKey": "{env:OPENAI_API_KEY}"
+      },
+      "models": {
+        "example/coding-model": {},
+        "your/model-id-here": {}
+      }
+    }
+  }
+}

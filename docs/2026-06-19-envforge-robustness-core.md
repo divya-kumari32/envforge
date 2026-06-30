@@ -19,10 +19,10 @@
 - Commit messages: imperative mood, no `Co-Authored-By` line.
 - Package import root is `envforge`; tests live under `tests/` and import from `envforge`.
 - **Branch:** all of Plan 1 lands on `main` — it is portable and contains no
-  cluster-specific code. BlueVela/enroot specifics are reserved for the `bluevela` branch
-  (Plan 4). `main` must never import anything BlueVela-specific.
-- **bsubs are never committed.** `*.bsub` is gitignored on every branch; submission scripts
-  are written locally and `scp`'d to BlueVela, never stored in the repo.
+  cluster-specific code. Cluster/container specifics are reserved for an infra-specific branch
+  (Plan 4). `main` must never import anything cluster-specific.
+- **Submission scripts are never committed.** Submission scripts are gitignored, not committed,
+  on every branch; they are written locally and `scp`'d to the cluster, never stored in the repo.
 
 ---
 
@@ -1378,7 +1378,7 @@ from envforge.models.gateway import ModelGateway, ModelSpec, ModelResponse, Fake
 from envforge.models.budget import BudgetLedger, BudgetExceeded
 from envforge.models.errors import TransportError
 
-SPECS = {"gen": ModelSpec(provider="litellm", model="glm-5", endpoints=["e1", "e2"])}
+SPECS = {"gen": ModelSpec(provider="openai-compatible", model="gen-model", endpoints=["e1", "e2"])}
 
 
 def test_successful_call_records_cost():
@@ -2281,7 +2281,7 @@ git commit -m "Add README; robustness core complete and green"
 **1. Spec coverage** (against `2026-06-19-envforge-design.md`):
 - §6 model gateway (selection/budget/fallback) → Tasks 8–11. ✓
 - §7 orchestrator + run-store + lock + exits + status → Tasks 3,4,5,7,14. ✓
-- §8 runtime backends (local; single-process setup is local no-op here, BlueVela deferred to Plan 4) → Task 12. ✓
+- §8 runtime backends (local; single-process setup is local no-op here, the cluster runtime deferred to Plan 4) → Task 12. ✓
 - §9 browser kind, health gates → **deferred to Plan 2** (explicitly out of this plan's scope). ✓
 - §12 issue mapping: #7 (status outside synced dir) → Task 15 uses `<run_dir>/_status`; #8–11 (budget) → Task 9; #12 (endpoint swap) → Task 10; #13 (dup jobs) → Task 5; #14 (ports) → Task 6; #16 (structured status) → Task 7. Remaining issues (#1–6 env setup, #2 browser, #3 health, #15 watcher, #17 ssh, #18 disk cleanup beyond the tar-first `clean`) → Plans 2/4. ✓ (no gap within this plan's stated scope)
 
@@ -2295,4 +2295,4 @@ git commit -m "Add README; robustness core complete and green"
 
 - **Plan 2 (→ `main`):** `agents/` (opencode `CodingAgent`, browser_use `EvalAgent`), `kinds/browser_webapp/` (`/api/state` protocol, 3 health gates), real `OpenAITransport`, the generate→eval vertical slice.
 - **Plan 3 (→ `main`):** function-task / audit / real-task / hardening / regression phases.
-- **Plan 4 (→ `bluevela` branch):** `runtimes/bluevela.py` (LSF/enroot single-process setup), container/`uv.lock` setup fixes, enroot-specific exit codes, external status watcher. Branched off `main`; merges `main` forward. No bsubs committed.
+- **Plan 4 (→ the cluster branch):** `runtimes/cluster.py` (batch-scheduler/container single-process setup), container/`uv.lock` setup fixes, container-specific exit codes, external status watcher. Branched off `main`; merges `main` forward. No submission scripts committed.

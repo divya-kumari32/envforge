@@ -5,10 +5,10 @@
 **Builds on:** Plan 1 (robustness core, merged to `main`) and the original design spec
 `docs/2026-06-19-envforge-design.md`.
 **Branch policy (amended 2026-06-22):** Until the pipeline runs a *proper real experiment*
-end-to-end, **ALL code stays on `main`** — the `main`/`bluevela` split from the original
+end-to-end, **ALL code stays on `main`** — the `main`/cluster-branch split from the original
 spec §16 is **deferred** until after the first successful real run. (Rationale: don't pay
 branch-management overhead before the pipeline is proven.) The only standing exception is
-unchanged: **`bsub` scripts are never committed** on any branch (gitignored, scp-only).
+unchanged: **job-submission scripts are never committed** on any branch (gitignored, scp-only).
 Plan 2 work is committed directly to `main`.
 
 ---
@@ -25,19 +25,19 @@ model wiring.
 `generate_app → health_gate → generate_function_tasks → evaluate (single pass) → score`.
 
 **Out of scope (deferred to Plan 3):** audit-eval loops (2b/3b), real tasks (3a),
-hardening rounds (4), final regression (5). Deferred to Plan 4 / the `bluevela` branch: the
-LSF/enroot runtime adapter.
+hardening rounds (4), final regression (5). Deferred to Plan 4 / the cluster branch: the
+batch-scheduler/container runtime adapter.
 
 The code is built and **unit-tested locally with fakes**; the first **real** generate→eval
-run executes inside BlueVela's existing enroot image (§9).
+run executes inside the cluster's existing prebuilt container image (§9).
 
 ## 2. Build approach (decided in brainstorming)
 
-- **envforge-original code, not a copy** of webarena-infinity. Third-party *libraries*
-  (`browser_use`, `playwright`, the `opencode` CLI) are public dependencies and are used
-  directly — that is not "copying the repo." The wrapper/integration code is authored fresh
-  for envforge's interfaces.
-- **Proven-pattern-informed.** The hard-won reliability lessons from webarena-infinity's
+- **envforge-original code, not a copy** of an existing webarena-style harness. Third-party
+  *libraries* (`browser_use`, `playwright`, the `opencode` CLI) are public dependencies and
+  are used directly — that is not "copying the repo." The wrapper/integration code is authored
+  fresh for envforge's interfaces.
+- **Proven-pattern-informed.** The hard-won reliability lessons from a prior webarena-style
   eval harness are encoded as explicit requirements + tests here (§5), so the fresh
   implementation has them by design rather than rediscovering the bugs.
 - **Same process that delivered Plan 1:** writing-plans (with envforge-original reference
@@ -52,7 +52,7 @@ envforge/agents/
   browser_eval.py     # EvalAgent: wraps browser_use (lifecycle + reliability encoded)
   fakes.py            # FakeCodingAgent / FakeEvalAgent for local unit tests
 envforge/models/
-  openai_transport.py # real Transport (OpenAI-compatible client → LiteLLM) for OUR calls
+  openai_transport.py # real Transport (OpenAI-compatible client → endpoint) for OUR calls
 envforge/kinds/
   base.py             # EnvironmentKind Protocol
   browser_webapp/
@@ -77,14 +77,14 @@ The Plan-1 core is reused **unchanged**: `Orchestrator`, `RunStore`, `RunLock`,
   `cwd`, stdout/stderr → `log_path`, with a classified timeout (→ a phase failure, never a
   hang). Augmentation (dir constraint, inlined docs/CLAUDE-style context) is built by the
   calling phase, not the agent.
-- Reads `OPENAI_API_KEY` / `OPENAI_BASE_URL` from the environment to reach LiteLLM.
+- Reads `OPENAI_API_KEY` / `OPENAI_BASE_URL` from the environment to reach the endpoint.
 - `FakeCodingAgent` (in `fakes.py`) writes canned files into `cwd` and returns a scripted
   result — lets every phase be unit-tested with no real model.
 
 ### EvalAgent (`agents/base.py`, `browser_eval.py`)
 - Interface (AgentRunner-shaped): `async setup(server_url)`, `async run(task, server_url, task_dir) -> EvalResult`, `async teardown()`.
 - `BrowserUseEvalAgent` wraps `browser_use.Agent` + `BrowserSession`, driven by an
-  OpenAI-compatible `llm` adapter pointed at LiteLLM.
+  OpenAI-compatible `llm` adapter pointed at the endpoint.
 - `FakeEvalAgent` returns scripted `EvalResult`s for local tests.
 
 ## 5. Encoded eval-harness reliability requirements (the proven lessons)
@@ -133,7 +133,7 @@ this contract; a shared reference server in the kind documents/serves it.
 
 ## 8. Model traffic & budget (decided)
 
-opencode and browser_use talk **directly** to the LiteLLM (OpenAI-compatible) endpoint via
+opencode and browser_use talk **directly** to the OpenAI-compatible endpoint via
 env vars / the `llm` adapter. Budget is enforced by the endpoint/key cap; budget/quota
 errors are classified by `models/errors.py` → `BUDGET_EXCEEDED` clean exit (via the existing
 fallback). envforge's in-process `ModelGateway` + the new `openai_transport.py` handle only
@@ -142,17 +142,18 @@ note for completeness: `BudgetExceeded` is not currently an `EnvforgeExit` — p
 make gateway calls must translate it to `PhaseResult.fail(BUDGET_EXCEEDED, …)` (this is the
 deferred Plan-1 item now in scope here).
 
-## 9. First real run (BlueVela, manual)
+## 9. First real run (cluster, manual)
 
-- **Image:** reuse the existing `webarena.sqsh` enroot image (already has opencode +
+- **Image:** reuse the existing prebuilt container image (already has opencode +
   browser_use + playwright + node).
 - **Code:** clone/scp envforge `main` into the container. `LocalRuntime` works as-is inside
-  the container (subprocess + localhost); the full Plan-4 LSF adapter is NOT required for a
-  manual run.
-- **Invocation:** a **hand-written bsub, never committed** (gitignored `*.bsub`), runs
+  the container (subprocess + localhost); the full Plan-4 batch-scheduler adapter is NOT
+  required for a manual run.
+- **Invocation:** a **hand-written job-submission script, never committed** (submission
+  scripts are gitignored, not committed), runs
   `envforge run --kind browser_webapp --docs <user-manuals subdir> --runs-root <mounted dir>`.
-- **Models:** `aws/glm-5` (generation, via opencode) + `deepseek-v32-az` (eval, via
-  browser_use), over the IBM LiteLLM endpoint. Confirmable; these match the proven combo.
+- **Models:** the generation model (via opencode) + the eval model (via browser_use), over
+  the OpenAI-compatible endpoint. Confirmable; these match the proven combo.
 - **Docs source:** a small `user-manuals/` subdir (~40–80 files).
 - **Output:** run-store + status under a mounted results dir, outside any synced app dir.
 
@@ -165,13 +166,13 @@ deferred Plan-1 item now in scope here).
 - **Reliability tests:** the §5 requirements each get a test (seed-state-never-ready →
   classified; injected CDP error → restart; task timeout → partial save + timeout outcome;
   zero results → `EVAL_HARNESS_FAILURE`).
-- **Integration (BV-gated):** one end-to-end real run, executed in the enroot container, not
+- **Integration (cluster-gated):** one end-to-end real run, executed in the container, not
   in local CI.
 
 ## 11. Resolved decisions (written-spec review)
 
-- **Models:** `aws/glm-5` (generation via opencode) + `deepseek-v32-az` (eval via
-  browser_use), over IBM LiteLLM — the proven combo. Configurable, but this is the default.
+- **Models:** the generation model (via opencode) + the eval model (via browser_use), over
+  the OpenAI-compatible endpoint — the proven combo. Configurable, but this is the default.
 - **Function-task suite:** full ~24 tasks (8 easy / 8 medium / 8 hard) for the first slice.
-- **Docs source:** chosen at run time — when we reach the BV run, list `user-manuals/`
+- **Docs source:** chosen at run time — when we reach the cluster run, list `user-manuals/`
   subdirs with ~40–80 files (read-only SSH) and recommend one for the user to pick.

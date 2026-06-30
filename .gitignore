@@ -6,7 +6,9 @@ runs/
 *.egg-info/
 .pytest_cache/
 
-# BlueVela submission scripts are NEVER committed (any branch).
-# Written locally, scp'd to BV. See spec §16.
+# Local job-submission scripts are never committed — they hold host/cluster
+# specifics. Written locally, copied to the cluster, kept out of the repo.
 *.bsub
-infra/bluevela/
+*.sub
+*.slurm
+infra/

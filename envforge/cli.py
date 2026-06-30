@@ -1,4 +1,42 @@
 # envforge/cli.py
+#
+# Entry point for the `envforge` command (exposed via [project.scripts] in
+# pyproject.toml). Subcommands: run | resume | status | clean.
+#
+# Real browser_webapp run — what each flag expects and does:
+#
+#   export OPENAI_BASE_URL="https://your-endpoint/v1"  # OpenAI-compatible base URL
+#   export OPENAI_API_KEY="your-key"                   # key for that endpoint
+#
+# By default generation uses the opencode CLI. To use the Claude Code CLI instead
+# (which can drive OS models via an Anthropic-compatible proxy), add
+# `--gen-agent claude` and set ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN to that
+# endpoint; --gen-model is then a model id that endpoint serves.
+#
+#   envforge run \
+#     --kind browser_webapp \          # which pipeline to run (see the two kinds below):
+#                                      #   browser_webapp = the real pipeline (opencode
+#                                      #     generation + browser_use eval; needs --docs,
+#                                      #     models, an endpoint, Chromium);
+#                                      #   test = the built-in model-free / browser-free
+#                                      #     kind that just exercises the orchestrator
+#                                      #     machinery (ignores --docs/--*-model/--task-count)
+#     --docs       /path/to/app-docs \ # dir of docs the app is generated FROM (required)
+#     --runs-root  /tmp/ef-runs \      # PARENT dir holding all runs; each run gets its own
+#                                      #   subdir <kind>-<timestamp>/ created underneath it
+#     --gen-model  litellm/<provider>/<model> \  # generation model handed to opencode;
+#                                      #   must be <provider>/<model> where <provider>
+#                                      #   matches a provider in your opencode.json
+#     --eval-model <model-id> \        # eval model handed to browser_use; any model id
+#                                      #   your endpoint serves (no opencode config needed)
+#     --task-count 24 \                # how many tasks to GENERATE. Grading is never
+#                                      #   selective: every task that ends up in the suite
+#                                      #   is graded — this only sets how many are created.
+#     --gen-timeout 14400              # per-phase coding-agent timeout in seconds; slow
+#                                      #   models need more (default 3600)
+#
+# resume needs none of the above: the first run persists them to
+# <run_dir>/_config.json, so `envforge resume --run <id> --runs-root <dir>` is enough.
 from __future__ import annotations
 
 import argparse
@@ -19,7 +57,7 @@ from .core.status import StatusWriter
 from .models.budget import BudgetLedger
 from .models.gateway import FakeTransport, ModelGateway
 from .phases.base import PhaseContext
-from .phases.demo import DEMO_ORDER, DEMO_PHASES
+from .phases.test import TEST_ORDER, TEST_PHASES
 from .runtimes.local import LocalRuntime
 from .core.jsonio import atomic_write_json, read_json
 
@@ -33,8 +71,9 @@ def build_run_id(kind: str, now: str) -> str:
     return f"{kind}-{compact}"
 
 
-# Registry maps a kind name to (phases, order). "demo" is the Plan-1 fake kind.
-KINDS = {"demo": (DEMO_PHASES, DEMO_ORDER)}
+# Registry maps a kind name to (phases, order). "test" is the built-in
+# model-free / browser-free kind (see envforge/phases/test.py).
+KINDS = {"test": (TEST_PHASES, TEST_ORDER)}
 
 # Kinds that build their phases dynamically from run args (real agents).
 DYNAMIC_KINDS = ("browser_webapp",)
@@ -55,26 +94,36 @@ def _resolve_kind_config(run_dir: Path, args) -> dict:
         raise EnvforgeExit(ExitCode.FATAL, "browser_webapp requires --docs on the initial run")
     cfg = {
         "docs": str(docs),
-        "gen_model": getattr(args, "gen_model", "aws/glm-5"),
-        "eval_model": getattr(args, "eval_model", "deepseek-v32-az"),
+        "gen_model": getattr(args, "gen_model", "litellm/your-coding-model"),
+        "eval_model": getattr(args, "eval_model", "your-eval-model"),
         "task_count": getattr(args, "task_count", 24),
         "runs_root": str(getattr(args, "runs_root")),
         "gen_timeout": float(getattr(args, "gen_timeout", 3600.0) or 3600.0),
+        "gen_agent": getattr(args, "gen_agent", "opencode") or "opencode",
     }
     atomic_write_json(config_path, cfg)
     return cfg
 
 
+def _build_coding_agent(name: str):
+    """Select the generation (coding) agent. Both implement the same CodingAgent
+    interface, so the rest of the pipeline is identical regardless of choice."""
+    if name == "claude":
+        from .agents.claude_agent import ClaudeAgent  # uses the `claude` CLI
+        return ClaudeAgent()
+    from .agents.opencode_agent import OpencodeAgent
+    return OpencodeAgent()
+
+
 def _build_browser_webapp_kind(cfg: dict):
     from .agents.browser_eval import BrowserUseEvalAgent
-    from .agents.opencode_agent import OpencodeAgent
     from .kinds.browser_webapp.kind import BrowserWebAppKind
     from browser_use.llm.openai.chat import ChatOpenAI  # lazy; only at real run time
 
     llm = ChatOpenAI(model=cfg["eval_model"],
                      base_url=os.environ["OPENAI_BASE_URL"],
                      api_key=os.environ["OPENAI_API_KEY"])
-    coding = OpencodeAgent()
+    coding = _build_coding_agent(cfg.get("gen_agent", "opencode"))
     # verifier_dir is rebound per-run inside EvaluatePhase via set_verifier_dir().
     eval_agent = BrowserUseEvalAgent(llm, verifier_dir=Path(cfg["runs_root"]))
     return BrowserWebAppKind(coding, eval_agent, gen_model=cfg["gen_model"],
@@ -188,13 +237,22 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--ports-dir", default=None)
 
     r = sub.add_parser("run")
-    r.add_argument("--kind", default="demo", choices=list(KINDS) + list(DYNAMIC_KINDS))
-    r.add_argument("--docs", default=None)
-    r.add_argument("--gen-model", default="aws/glm-5")
-    r.add_argument("--eval-model", default="deepseek-v32-az")
-    r.add_argument("--task-count", type=int, default=24)
+    r.add_argument("--kind", default="test", choices=list(KINDS) + list(DYNAMIC_KINDS),
+                   help="which pipeline to run: 'test' (built-in, no models/browser) or 'browser_webapp' (real opencode + browser_use run)")
+    r.add_argument("--docs", default=None,
+                   help="directory of docs the app is generated FROM (required for browser_webapp)")
+    r.add_argument("--gen-agent", default="opencode", choices=["opencode", "claude"],
+                   help="coding agent for generation: 'opencode' (default) or 'claude' (Claude Code CLI; "
+                        "point it at any model — incl. OS models — via ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN)")
+    r.add_argument("--gen-model", default="litellm/your-coding-model",
+                   help="generation model id; for opencode use <provider>/<model> from your opencode.json, "
+                        "for claude use a model id your ANTHROPIC_BASE_URL endpoint serves")
+    r.add_argument("--eval-model", default="your-eval-model",
+                   help="eval model handed to browser_use; any model id your endpoint serves")
+    r.add_argument("--task-count", type=int, default=24,
+                   help="number of tasks to generate and grade (default 24)")
     r.add_argument("--gen-timeout", type=float, default=3600.0,
-                   help="per-phase coding-agent (opencode) timeout in seconds for generate_app/function_tasks")
+                   help="per-phase coding-agent (opencode) timeout in seconds for generate_app/function_tasks (default 3600; slow models need more)")
     add_common(r)
     r.set_defaults(func=cmd_run)
 
